@@ -70,7 +70,8 @@ func (s *Service) Authenticate(ctx context.Context, rawCPF string) (IssuedToken,
 
 	customer, err := s.customers.FindByCPF(ctx, document)
 	if err != nil {
-		return IssuedToken{}, fmt.Errorf("consultar cliente: %w", err)
+		// O adaptador já descreve a falha; embrulhar de novo só duplicaria o prefixo no log.
+		return IssuedToken{}, err
 	}
 	if customer == nil {
 		return IssuedToken{}, &NotAuthorizedError{Reason: ReasonNotFound}

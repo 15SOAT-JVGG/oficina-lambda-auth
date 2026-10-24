@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"strconv"
@@ -16,6 +17,8 @@ const (
 	defaultSSLMode           = "require"
 	defaultIssuer            = "oficina-api"
 	defaultExpirationMinutes = 60
+	// maxExpirationMinutes é o maior valor que ainda cabe em time.Duration sem estourar.
+	maxExpirationMinutes = int(math.MaxInt64 / int64(time.Minute))
 )
 
 // Config reúne tudo o que a função precisa para falar com o banco e assinar tokens.
@@ -38,20 +41,29 @@ type Lookup func(key string) (string, bool)
 // FromEnv lê e valida a configuração. A chave privada chega em base64 porque variável de ambiente
 // não carrega quebra de linha de PEM com segurança.
 func FromEnv(lookup Lookup) (Config, error) {
+	// present trata valor só com espaços como ausente, mas devolve o valor original: a normalização
+	// fica a cargo de quem chama, porque a senha do banco não pode ser alterada.
+	present := func(key string) (string, bool) {
+		value, ok := lookup(key)
+		return value, ok && strings.TrimSpace(value) != ""
+	}
 	get := func(key, fallback string) string {
-		if value, ok := lookup(key); ok && strings.TrimSpace(value) != "" {
+		if value, ok := present(key); ok {
 			return strings.TrimSpace(value)
 		}
 		return fallback
 	}
 
 	var problems []error
-	required := func(key string) string {
-		value := get(key, "")
-		if value == "" {
+	requiredRaw := func(key string) string {
+		value, ok := present(key)
+		if !ok {
 			problems = append(problems, fmt.Errorf("variável %s é obrigatória", key))
 		}
 		return value
+	}
+	required := func(key string) string {
+		return strings.TrimSpace(requiredRaw(key))
 	}
 
 	cfg := Config{
@@ -59,7 +71,7 @@ func FromEnv(lookup Lookup) (Config, error) {
 		DBPort:     get("DB_PORT", defaultPort),
 		DBName:     required("DB_NAME"),
 		DBUsername: required("DB_USERNAME"),
-		DBPassword: required("DB_PASSWORD"),
+		DBPassword: requiredRaw("DB_PASSWORD"),
 		DBSSLMode:  get("DB_SSLMODE", defaultSSLMode),
 		JWTIssuer:  get("JWT_ISSUER", defaultIssuer),
 	}
@@ -71,8 +83,8 @@ func FromEnv(lookup Lookup) (Config, error) {
 	cfg.JWTPrivateKeyPEM = privateKey
 
 	minutes, err := strconv.Atoi(get("JWT_EXPIRATION_MINUTES", strconv.Itoa(defaultExpirationMinutes)))
-	if err != nil || minutes <= 0 {
-		problems = append(problems, errors.New("JWT_EXPIRATION_MINUTES precisa ser um inteiro positivo"))
+	if err != nil || minutes <= 0 || minutes > maxExpirationMinutes {
+		problems = append(problems, fmt.Errorf("JWT_EXPIRATION_MINUTES precisa ser um inteiro entre 1 e %d", maxExpirationMinutes))
 	}
 	cfg.TokenLifetime = time.Duration(minutes) * time.Minute
 

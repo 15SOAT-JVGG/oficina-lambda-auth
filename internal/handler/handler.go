@@ -152,7 +152,12 @@ func respond(status int, body any) events.APIGatewayV2HTTPResponse {
 	}
 	return events.APIGatewayV2HTTPResponse{
 		StatusCode: status,
-		Headers:    map[string]string{"Content-Type": "application/json"},
-		Body:       string(payload),
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+			// RFC 6749 §5.1: resposta com token não pode ser guardada por navegador, CDN ou proxy.
+			"Cache-Control": "no-store",
+			"Pragma":        "no-cache",
+		},
+		Body: string(payload),
 	}
 }

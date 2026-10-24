@@ -108,6 +108,9 @@ func TestAuthenticate(t *testing.T) {
 		if !errors.Is(err, databaseDown) {
 			t.Fatalf("erro = %v, esperado a falha do banco", err)
 		}
+		if err.Error() != databaseDown.Error() {
+			t.Errorf("erro = %q; o adaptador já dá contexto, o serviço não deve embrulhar de novo", err)
+		}
 	})
 
 	t.Run("propaga falha na assinatura", func(t *testing.T) {

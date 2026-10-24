@@ -69,6 +69,9 @@ func TestHandle(t *testing.T) {
 		if response.StatusCode != 200 || response.Headers["Content-Type"] != "application/json" {
 			t.Fatalf("resposta inesperada: %d %v", response.StatusCode, response.Headers)
 		}
+		if response.Headers["Cache-Control"] != "no-store" || response.Headers["Pragma"] != "no-cache" {
+			t.Errorf("a resposta com token não pode ser cacheada (RFC 6749 §5.1): %v", response.Headers)
+		}
 		body := decode(t, response)
 		if body["token"] != "signed.jwt.token" || body["customerId"] != customerID.String() ||
 			body["role"] != "CUSTOMER" || body["expiresIn"] != float64(3600) {
@@ -207,6 +210,9 @@ func TestHandle(t *testing.T) {
 		}
 		if body["path"] != "/v1/auth/customer" || body["traceId"] != requestID || body["status"] != float64(400) {
 			t.Errorf("campos inesperados: %v", body)
+		}
+		if response.Headers["Cache-Control"] != "no-store" {
+			t.Errorf("respostas de erro também não devem ser cacheadas: %v", response.Headers)
 		}
 	})
 }

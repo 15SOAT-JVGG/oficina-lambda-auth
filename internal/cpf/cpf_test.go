@@ -2,6 +2,7 @@ package cpf_test
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/15SOAT-JVGG/oficina-lambda-auth/internal/cpf"
@@ -56,5 +57,12 @@ func TestStringMascaraOCPF(t *testing.T) {
 
 	if got, want := parsed.String(), "***.982.***-25"; got != want {
 		t.Errorf("String() = %q, esperado %q", got, want)
+	}
+}
+
+func TestStringDoValorZeroNaoEntraEmPanico(t *testing.T) {
+	// Parse devolve CPF{} junto com o erro; formatar esse valor em um log não pode derrubar a função.
+	if got := fmt.Sprint(cpf.CPF{}); got != "" {
+		t.Errorf("String() do valor zero = %q, esperado vazio", got)
 	}
 }

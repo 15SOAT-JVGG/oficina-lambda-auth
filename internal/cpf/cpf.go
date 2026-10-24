@@ -36,7 +36,11 @@ func (c CPF) Digits() string {
 }
 
 // String mascara o CPF de propósito: é dado pessoal e não deve aparecer inteiro em log.
+// O valor zero (o que Parse devolve junto com o erro) vira string vazia em vez de panic.
 func (c CPF) String() string {
+	if len(c.digits) != length {
+		return ""
+	}
 	return "***." + c.digits[3:6] + ".***-" + c.digits[9:]
 }
 

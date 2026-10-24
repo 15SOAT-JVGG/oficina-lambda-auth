@@ -101,6 +101,51 @@ func TestFromEnv(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("recusa validade que estoura time.Duration", func(t *testing.T) {
+		values := completeEnv()
+		values["JWT_EXPIRATION_MINUTES"] = "1000000000000000"
+
+		if _, err := config.FromEnv(env(values)); err == nil || !strings.Contains(err.Error(), "JWT_EXPIRATION_MINUTES") {
+			t.Errorf("esperado erro citando JWT_EXPIRATION_MINUTES: %v", err)
+		}
+	})
+
+	t.Run("preserva espaços na senha do banco", func(t *testing.T) {
+		values := completeEnv()
+		values["DB_PASSWORD"] = " s3cret \n"
+
+		cfg, err := config.FromEnv(env(values))
+		if err != nil {
+			t.Fatalf("erro inesperado: %v", err)
+		}
+		if cfg.DBPassword != " s3cret \n" {
+			t.Errorf("DBPassword = %q, a senha não pode ser alterada", cfg.DBPassword)
+		}
+	})
+
+	t.Run("trata senha em branco como ausente", func(t *testing.T) {
+		values := completeEnv()
+		values["DB_PASSWORD"] = "  "
+
+		if _, err := config.FromEnv(env(values)); err == nil || !strings.Contains(err.Error(), "DB_PASSWORD") {
+			t.Errorf("esperado erro citando DB_PASSWORD: %v", err)
+		}
+	})
+
+	t.Run("normaliza espaços nas demais variáveis", func(t *testing.T) {
+		values := completeEnv()
+		values["DB_HOST"] = " db.internal \n"
+		values["JWT_PRIVATE_KEY_B64"] = " " + values["JWT_PRIVATE_KEY_B64"] + "\n"
+
+		cfg, err := config.FromEnv(env(values))
+		if err != nil {
+			t.Fatalf("erro inesperado: %v", err)
+		}
+		if cfg.DBHost != "db.internal" || cfg.JWTPrivateKeyPEM != pemText {
+			t.Errorf("valores não normalizados: %+v", cfg)
+		}
+	})
 }
 
 func TestConnectionString(t *testing.T) {
