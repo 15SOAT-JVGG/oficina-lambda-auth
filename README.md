@@ -113,8 +113,45 @@ Uma linha JSON por evento, com `timestamp`, `level`, `service`, `event` e `reque
 do API Gateway, para correlacionar com o access log). O CPF nunca aparece no log; o motivo de uma recusa,
 sim (`reason`: `invalid-cpf`, `not-found`, `inactive`, `malformed-request`).
 
+## Infraestrutura e deploy
+
+O Terraform está em [`terraform/`](terraform/), com um state por ambiente
+(`oficina-lambda-auth/<ambiente>/terraform.tfstate`). Ele cria:
+
+| Recurso | Descrição |
+|---|---|
+| `aws_lambda_function` | `oficina-<ambiente>-customer-auth`, `provided.al2023`, dentro da VPC, role `LabRole` |
+| `aws_security_group` + regra de saída | Só a porta 5432, dentro da VPC. Sem NAT, a função não alcança a internet, e não precisa |
+| `aws_cloudwatch_log_group` | `/aws/lambda/oficina-<ambiente>-customer-auth`, retenção de 7 dias |
+| `aws_apigatewayv2_integration` + `aws_apigatewayv2_route` | `POST /v1/auth/customer` no API Gateway do ambiente |
+| `aws_lambda_permission` | Autoriza só aquele gateway a invocar a função |
+
+O banco e a rede vêm do state do `oficina-infra-db`; o API Gateway, do state do `oficina-infra-k8s`.
+Por isso os dois precisam ter sido aplicados no ambiente antes desta função.
+
+### Pipeline
+
+| Evento | O que acontece |
+|---|---|
+| Pull request | `ci.yml`: `gofmt`, `go vet`, testes unitários e de integração. `terraform.yml`: `fmt`, `validate` e `plan` em homolog |
+| Push em `homolog` ou `production` | Compila o binário e roda `terraform apply` no ambiente da branch |
+
+A `main` é só integração e não implanta nada. A promoção é o merge `main` → `homolog` → `production`.
+
+### Secrets
+
+Do **Environment** do GitHub (`homolog` e `production`):
+
+| Secret | Valor |
+|---|---|
+| `DB_PASSWORD` | A senha do RDS do ambiente (a mesma do `oficina-infra-db`) |
+| `JWT_PRIVATE_KEY_B64` | A chave privada RS256 em base64, **a mesma** do `JWT_PRIVATE_KEY_B64` da API no ambiente |
+
+As credenciais da AWS (`AWS_*`) e a variável `TF_STATE_BUCKET` já existem na organização. O pull request
+não recebe os secrets do Environment; o `plan` usa valores de marcação e mostra só a forma dos recursos.
+
+> Com chave ou issuer diferentes dos da API, a função emite tokens que ela recusa com `401`.
+
 ## Pendências
 
-- Terraform da função e da rota no API Gateway.
-- Pipeline de CI/CD por branch (`main`, `homolog`, `production`).
 - Link do Swagger/Postman da API e do deploy ativo.
