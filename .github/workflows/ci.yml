@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, homolog, production]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # É assim que a função é compilada para a Lambda; testar do mesmo jeito evita surpresa de linkagem.
+  CGO_ENABLED: "0"
+
+jobs:
+  test:
+    name: Testes (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Formatação
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [[ -n "$unformatted" ]]; then
+            echo "Arquivos fora do gofmt:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Testes unitários
+        run: go test ./...
+
+      # O runner tem Docker: o teste sobe um Postgres real e exercita a consulta de verdade.
+      - name: Testes de integração
+        run: go test -tags integration ./...

@@ -1,0 +1,150 @@
+name: Terraform
+
+on:
+  pull_request:
+    branches: [main, homolog, production]
+  push:
+    branches: [homolog, production]
+
+permissions:
+  contents: read
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  TF_VAR_aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+  TF_VAR_state_bucket: ${{ vars.TF_STATE_BUCKET }}
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  check:
+    name: Format e validação
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+
+      - name: terraform fmt
+        run: terraform -chdir=terraform fmt -check -recursive
+
+      - name: terraform init
+        run: terraform -chdir=terraform init -backend=false -input=false
+
+      - name: terraform validate
+        run: terraform -chdir=terraform validate
+
+  # O Terraform só empacota o binário; quem o compila é este job. CGO desligado dá o binário
+  # estático que o runtime provided.al2023 exige.
+  build:
+    name: Compila a função
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: go build
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o build/bootstrap ./cmd/auth
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap
+          path: build/bootstrap
+          if-no-files-found: error
+          retention-days: 1
+
+  # O plan roda só contra homolog: production só passa a ter state quando o oficina-infra-db a
+  # provisionar. Os segredos do Environment não chegam ao pull request, então o plan usa valores
+  # de marcação; o que ele mostra é a forma dos recursos, não os valores das variáveis sensíveis.
+  plan:
+    if: github.event_name == 'pull_request'
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    env:
+      TF_VAR_environment: homolog
+      TF_VAR_db_password: apenas-para-o-plan
+      TF_VAR_jwt_private_key_b64: apenas-para-o-plan
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bootstrap
+          path: build
+
+      - run: chmod +x build/bootstrap
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+
+      - name: terraform init
+        run: |
+          terraform -chdir=terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=oficina-lambda-auth/homolog/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: terraform plan
+        run: terraform -chdir=terraform plan -input=false -lock-timeout=60s -no-color | tee plan.txt
+
+      - name: Resumo do plan
+        if: always()
+        run: |
+          {
+            echo "### Terraform plan — homolog"
+            echo '```'
+            tail -n 60 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    name: Apply (${{ github.ref_name }})
+    if: github.event_name == 'push'
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    # `environment` é o que faz `secrets.*` resolver para os valores do ambiente da branch.
+    environment: ${{ github.ref_name }}
+    concurrency:
+      group: terraform-apply-${{ github.ref_name }}
+      cancel-in-progress: false
+    env:
+      TF_VAR_environment: ${{ github.ref_name }}
+      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+      TF_VAR_jwt_private_key_b64: ${{ secrets.JWT_PRIVATE_KEY_B64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bootstrap
+          path: build
+
+      # O artefato não preserva a permissão de execução, e a Lambda não inicia um bootstrap sem ela.
+      - run: chmod +x build/bootstrap
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+
+      - name: terraform init
+        run: |
+          terraform -chdir=terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=oficina-lambda-auth/${{ github.ref_name }}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: terraform apply
+        run: terraform -chdir=terraform apply -input=false -auto-approve -lock-timeout=60s
+
+      - name: Outputs
+        run: terraform -chdir=terraform output -no-color >> "$GITHUB_STEP_SUMMARY"
