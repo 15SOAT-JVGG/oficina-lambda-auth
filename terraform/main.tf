@@ -42,8 +42,9 @@ data "archive_file" "function" {
 # A função só fala com o Postgres, dentro da VPC. Sem NAT Gateway ela não alcança a internet, e
 # não precisa: não chama nenhum serviço externo.
 resource "aws_security_group" "function" {
-  name        = local.function_name
-  description = "Lambda de autenticação por CPF (${var.environment})"
+  name = local.function_name
+  # A descrição de Security Group no EC2 só aceita ASCII; acento aqui derruba o apply.
+  description = "Lambda de autenticacao por CPF (${var.environment})"
   vpc_id      = local.db.vpc_id
 }
 
