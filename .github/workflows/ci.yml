@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main, homolog, production]
   push:
-    branches: [main]
+    branches: [main, homolog, production]
 
 permissions:
   contents: read
