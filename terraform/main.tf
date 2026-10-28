@@ -97,15 +97,15 @@ resource "aws_lambda_function" "auth" {
   # no Learner Lab.
   environment {
     variables = {
-      DB_HOST                     = local.db.db_address
-      DB_PORT                     = tostring(local.db.db_port)
-      DB_NAME                     = local.db.db_name
-      DB_USERNAME                 = local.db.db_username
-      DB_PASSWORD                 = var.db_password
-      DB_SSLMODE                  = "require"
-      JWT_PRIVATE_KEY_B64         = var.jwt_private_key_b64
-      JWT_ISSUER                  = var.jwt_issuer
-      JWT_EXPIRATION_MINUTES      = tostring(var.jwt_expiration_minutes)
+      DB_HOST                = local.db.db_address
+      DB_PORT                = tostring(local.db.db_port)
+      DB_NAME                = local.db.db_name
+      DB_USERNAME            = local.db.db_username
+      DB_PASSWORD            = var.db_password
+      DB_SSLMODE             = "require"
+      JWT_PRIVATE_KEY_B64    = var.jwt_private_key_b64
+      JWT_ISSUER             = var.jwt_issuer
+      JWT_EXPIRATION_MINUTES = tostring(var.jwt_expiration_minutes)
     }
   }
 
