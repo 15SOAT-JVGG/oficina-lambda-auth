@@ -56,7 +56,7 @@ jobs:
           terraform_version: 1.10.5
 
       - name: terraform fmt
-        run: terraform -chdir=terraform fmt -check -recursive
+        run: terraform -chdir=terraform fmt -diff -check -recursive
 
       - name: terraform init
         run: terraform -chdir=terraform init -backend=false -input=false
