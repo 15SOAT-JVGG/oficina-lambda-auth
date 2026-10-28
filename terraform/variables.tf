@@ -41,6 +41,23 @@ variable "jwt_private_key_b64" {
   }
 }
 
+variable "jwt_public_key_b64" {
+  description = "Chave pública RSA (SubjectPublicKeyInfo PEM) em base64, correspondente à chave usada pela API."
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = length(var.jwt_public_key_b64) > 0
+    error_message = "A chave pública do JWT não pode ser vazia."
+  }
+}
+
+variable "source_revision" {
+  description = "SHA de origem usado no contrato de configuração publicado no S3."
+  type        = string
+  default     = "unknown"
+}
+
 variable "jwt_issuer" {
   description = "Issuer do JWT. Precisa ser igual ao JWT_ISSUER da API, ou ela recusa os tokens."
   type        = string
@@ -70,6 +87,8 @@ variable "log_retention_days" {
   type        = number
   default     = 7
 }
+
+
 
 variable "lab_role_name" {
   description = "Role pré-existente do AWS Academy usada pela função (não é possível criar IAM no Learner Lab)."

@@ -5,20 +5,46 @@ on:
     branches: [main, homolog, production]
   push:
     branches: [homolog, production]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Ambiente a recuperar após renovação da sessão AWS Academy.
+        required: true
+        type: choice
+        options: [homolog, production]
 
 permissions:
   contents: read
 
-env:
-  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-  TF_VAR_aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
-  TF_VAR_state_bucket: ${{ vars.TF_STATE_BUCKET }}
-  TF_IN_AUTOMATION: "true"
-
 jobs:
+  go-test:
+    name: Testes e análise Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Formatação
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [[ -n "$unformatted" ]]; then
+            echo "Arquivos fora do gofmt:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Testes unitários
+        run: go test ./...
+
+      - name: Testes de integração
+        run: go test -tags integration ./...
+
   check:
     name: Format e validação
     runs-on: ubuntu-latest
@@ -30,7 +56,7 @@ jobs:
           terraform_version: 1.10.5
 
       - name: terraform fmt
-        run: terraform -chdir=terraform fmt -check -recursive
+        run: terraform -chdir=terraform fmt -diff -check -recursive
 
       - name: terraform init
         run: terraform -chdir=terraform init -backend=false -input=false
@@ -42,6 +68,7 @@ jobs:
   # estático que o runtime provided.al2023 exige.
   build:
     name: Compila a função
+    needs: [go-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,12 +78,15 @@ jobs:
           go-version-file: go.mod
 
       - name: go build
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o build/bootstrap ./cmd/auth
+        run: |
+          mkdir -p build/auth build/authorizer
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o build/auth/bootstrap ./cmd/auth
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o build/authorizer/bootstrap ./cmd/authorizer
 
       - uses: actions/upload-artifact@v4
         with:
-          name: bootstrap
-          path: build/bootstrap
+          name: lambda-packages
+          path: build/**/bootstrap
           if-no-files-found: error
           retention-days: 1
 
@@ -64,22 +94,36 @@ jobs:
   # provisionar. Os segredos do Environment não chegam ao pull request, então o plan usa valores
   # de marcação; o que ele mostra é a forma dos recursos, não os valores das variáveis sensíveis.
   plan:
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
     needs: [check, build]
     runs-on: ubuntu-latest
+    environment: homolog
     env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      TF_VAR_state_bucket: ${{ vars.TF_STATE_BUCKET }}
+      TF_IN_AUTOMATION: "true"
       TF_VAR_environment: homolog
       TF_VAR_db_password: apenas-para-o-plan
       TF_VAR_jwt_private_key_b64: apenas-para-o-plan
+      TF_VAR_jwt_public_key_b64: apenas-para-o-plan
+      TF_VAR_jwt_issuer: ${{ vars.JWT_ISSUER || 'oficina-api' }}
+      TF_VAR_jwt_expiration_minutes: ${{ vars.JWT_EXPIRATION_MINUTES || '60' }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
-          name: bootstrap
+          name: lambda-packages
           path: build
 
-      - run: chmod +x build/bootstrap
+      - run: chmod +x build/auth/bootstrap build/authorizer/bootstrap
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -91,45 +135,56 @@ jobs:
           terraform -chdir=terraform init -input=false \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
             -backend-config="key=oficina-lambda-auth/homolog/terraform.tfstate" \
-            -backend-config="region=${AWS_REGION}"
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="use_lockfile=true"
 
       - name: terraform plan
-        run: terraform -chdir=terraform plan -input=false -lock-timeout=60s -no-color | tee plan.txt
-
-      - name: Resumo do plan
-        if: always()
-        run: |
-          {
-            echo "### Terraform plan — homolog"
-            echo '```'
-            tail -n 60 plan.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: terraform -chdir=terraform plan -input=false -lock-timeout=60s -no-color
 
   apply:
-    name: Apply (${{ github.ref_name }})
-    if: github.event_name == 'push'
+    name: Apply (${{ inputs.environment || github.ref_name }})
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.ref_name == inputs.environment)
     needs: [check, build]
     runs-on: ubuntu-latest
     # `environment` é o que faz `secrets.*` resolver para os valores do ambiente da branch.
-    environment: ${{ github.ref_name }}
+    environment: ${{ inputs.environment || github.ref_name }}
     concurrency:
-      group: terraform-apply-${{ github.ref_name }}
+      group: terraform-apply-${{ inputs.environment || github.ref_name }}
       cancel-in-progress: false
+    outputs:
+      contracts_ready: ${{ steps.gateway-contracts.outputs.ready }}
     env:
-      TF_VAR_environment: ${{ github.ref_name }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      TF_VAR_state_bucket: ${{ vars.TF_STATE_BUCKET }}
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_environment: ${{ inputs.environment || github.ref_name }}
       TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
       TF_VAR_jwt_private_key_b64: ${{ secrets.JWT_PRIVATE_KEY_B64 }}
+      TF_VAR_jwt_public_key_b64: ${{ secrets.JWT_PUBLIC_KEY_B64 }}
+      TF_VAR_jwt_issuer: ${{ vars.JWT_ISSUER || 'oficina-api' }}
+      TF_VAR_jwt_expiration_minutes: ${{ vars.JWT_EXPIRATION_MINUTES || '60' }}
+      TF_VAR_source_revision: ${{ github.sha }}
+      JWT_PRIVATE_KEY_B64: ${{ secrets.JWT_PRIVATE_KEY_B64 }}
+      JWT_PUBLIC_KEY_B64: ${{ secrets.JWT_PUBLIC_KEY_B64 }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validar par JWT e derivar a chave pública do Authorizer
+        run: bash scripts/validate-jwt-keypair.sh
+
       - uses: actions/download-artifact@v4
         with:
-          name: bootstrap
+          name: lambda-packages
           path: build
 
       # O artefato não preserva a permissão de execução, e a Lambda não inicia um bootstrap sem ela.
-      - run: chmod +x build/bootstrap
+      - run: chmod +x build/auth/bootstrap build/authorizer/bootstrap
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -140,11 +195,53 @@ jobs:
         run: |
           terraform -chdir=terraform init -input=false \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="key=oficina-lambda-auth/${{ github.ref_name }}/terraform.tfstate" \
-            -backend-config="region=${AWS_REGION}"
+            -backend-config="key=oficina-lambda-auth/${{ inputs.environment || github.ref_name }}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="use_lockfile=true"
 
       - name: terraform apply
         run: terraform -chdir=terraform apply -input=false -auto-approve -lock-timeout=60s
 
+      - name: Verificar contratos para reconciliação do Gateway
+        id: gateway-contracts
+        env:
+          CONTRACT_ENVIRONMENT: ${{ inputs.environment || github.ref_name }}
+        run: |
+          error_file="$(mktemp)"
+          trap 'rm -f "$error_file"' EXIT
+          for contract in upstream authorizer; do
+            key="oficina/config/v1/${CONTRACT_ENVIRONMENT}/${contract}.json"
+            if aws s3api head-object --bucket "$TF_VAR_state_bucket" --key "$key" >/dev/null 2>"$error_file"; then
+              continue
+            fi
+            if grep -Eq '\(404\)|Not Found|NoSuchKey' "$error_file"; then
+              echo "Contrato ${contract} ausente para ${CONTRACT_ENVIRONMENT}; reconciliação pendente."
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            cat "$error_file" >&2
+            exit 1
+          done
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
       - name: Outputs
         run: terraform -chdir=terraform output -no-color >> "$GITHUB_STEP_SUMMARY"
+
+  reconcile-gateway:
+    name: Reconciliar Gateway após publicação
+    needs: apply
+    if: needs.apply.outputs.contracts_ready == 'true'
+    uses: 15SOAT-JVGG/oficina-infra-k8s/.github/workflows/reconcile.yml@5077a7c856ae68cc56ca164743eb7cb3a416c18c
+    with:
+      environment: ${{ inputs.environment || github.ref_name }}
+      source_kind: lambda
+      source_sha: ${{ github.sha }}
+      # Configure esta variável com o mesmo SHA de oficina-infra-k8s usado no `uses` após
+      # publicar o workflow reutilizável no GitHub.
+      infra_ref: 5077a7c856ae68cc56ca164743eb7cb3a416c18c
+      aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      tf_state_bucket: ${{ vars.TF_STATE_BUCKET }}
+    secrets:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
