@@ -110,7 +110,6 @@ resource "aws_lambda_function" "auth" {
   }
 
   depends_on = [aws_cloudwatch_log_group.function]
-
 }
 
 # A rota é mais específica que o proxy ANY /{proxy+} do cluster, então o gateway a escolhe para
