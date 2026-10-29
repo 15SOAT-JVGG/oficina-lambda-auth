@@ -231,17 +231,17 @@ jobs:
     name: Reconciliar Gateway após publicação
     needs: apply
     if: needs.apply.outputs.contracts_ready == 'true'
-    uses: 15SOAT-JVGG/oficina-infra-k8s/.github/workflows/reconcile.yml@9204dc7c8f53b818782654220804ca1d5f0df38d
+    uses: 15SOAT-JVGG/oficina-infra-k8s/.github/workflows/reconcile.yml@4a395aa3852ea366edf7ab41348c5464192fd286
     with:
       environment: ${{ inputs.environment || github.ref_name }}
       source_kind: lambda
       source_sha: ${{ github.sha }}
-      # Configure esta variável com o mesmo SHA de oficina-infra-k8s usado no `uses` após
-      # publicar o workflow reutilizável no GitHub.
-      infra_ref: 9204dc7c8f53b818782654220804ca1d5f0df38d
+      infra_ref: 4a395aa3852ea366edf7ab41348c5464192fd286
       aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
       tf_state_bucket: ${{ vars.TF_STATE_BUCKET }}
+      jwt_issuer: ${{ vars.JWT_ISSUER || 'oficina-api' }}
     secrets:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      AUTHORIZER_TEST_CUSTOMER_CPF: ${{ secrets.AUTHORIZER_TEST_CUSTOMER_CPF }}
