@@ -241,7 +241,9 @@ jobs:
       infra_ref: 5077a7c856ae68cc56ca164743eb7cb3a416c18c
       aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
       tf_state_bucket: ${{ vars.TF_STATE_BUCKET }}
+      jwt_issuer: ${{ vars.JWT_ISSUER || 'oficina-api' }}
     secrets:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      AUTHORIZER_TEST_CUSTOMER_CPF: ${{ secrets.AUTHORIZER_TEST_CUSTOMER_CPF }}
