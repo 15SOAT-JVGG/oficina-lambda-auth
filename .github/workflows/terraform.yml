@@ -155,6 +155,8 @@ jobs:
       cancel-in-progress: false
     outputs:
       contracts_ready: ${{ steps.gateway-contracts.outputs.ready }}
+      tf_state_bucket: ${{ steps.gateway-contracts.outputs.tf_state_bucket }}
+      aws_region: ${{ steps.gateway-contracts.outputs.aws_region }}
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -207,6 +209,7 @@ jobs:
         env:
           CONTRACT_ENVIRONMENT: ${{ inputs.environment || github.ref_name }}
         run: |
+          printf 'tf_state_bucket=%s\naws_region=%s\n' "$TF_VAR_state_bucket" "$AWS_REGION" >> "$GITHUB_OUTPUT"
           error_file="$(mktemp)"
           trap 'rm -f "$error_file"' EXIT
           for contract in upstream authorizer; do
@@ -231,16 +234,16 @@ jobs:
     name: Reconciliar Gateway após publicação
     needs: apply
     if: needs.apply.outputs.contracts_ready == 'true'
-    uses: 15SOAT-JVGG/oficina-infra-k8s/.github/workflows/reconcile.yml@b622ba96628fbec5508f3195debf357f139c58c0
+    uses: 15SOAT-JVGG/oficina-infra-k8s/.github/workflows/reconcile.yml@d7607607ae7681c7106ebf828a94265d42c00141
     with:
       environment: ${{ inputs.environment || github.ref_name }}
       source_kind: lambda
       source_sha: ${{ github.sha }}
       # Configure esta variável com o mesmo SHA de oficina-infra-k8s usado no `uses` após
       # publicar o workflow reutilizável no GitHub.
-      infra_ref: b622ba96628fbec5508f3195debf357f139c58c0
-      aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
-      tf_state_bucket: ${{ vars.TF_STATE_BUCKET }}
+      infra_ref: d7607607ae7681c7106ebf828a94265d42c00141
+      aws_region: ${{ needs.apply.outputs.aws_region }}
+      tf_state_bucket: ${{ needs.apply.outputs.tf_state_bucket }}
     secrets:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
