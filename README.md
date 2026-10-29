@@ -146,9 +146,13 @@ Do **Environment** do GitHub (`homolog` e `production`):
 |---|---|
 | `DB_PASSWORD` | A senha do RDS do ambiente (a mesma do `oficina-infra-db`) |
 | `JWT_PRIVATE_KEY_B64` | A chave privada RS256 em base64, **a mesma** do `JWT_PRIVATE_KEY_B64` da API no ambiente |
+| `AUTHORIZER_TEST_CUSTOMER_CPF` | Em `homolog`, CPF sintético de cliente ativo para o smoke test pós-reconciliação do Gateway |
 
-As credenciais da AWS (`AWS_*`) e a variável `TF_STATE_BUCKET` já existem na organização. O pull request
-não recebe os secrets do Environment; o `plan` usa valores de marcação e mostra só a forma dos recursos.
+Em `homolog`, os workflows usam os secrets Organization `HOMOLOG_AWS_ACCESS_KEY_ID`,
+`HOMOLOG_AWS_SECRET_ACCESS_KEY` e `HOMOLOG_AWS_SESSION_TOKEN`, restritos aos quatro repositórios.
+Em `production`, continuam usando `AWS_*` do Environment. `AWS_REGION` e `TF_STATE_BUCKET` vêm das
+variables da Organization; variables de Environment com o mesmo nome têm precedência. Pull requests
+não recebem os secrets do Environment; o `plan` usa valores de marcação e mostra só a forma dos recursos.
 
 > Com chave ou issuer diferentes dos da API, a função emite tokens que ela recusa com `401`.
 
