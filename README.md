@@ -159,3 +159,8 @@ não recebem os secrets do Environment; o `plan` usa valores de marcação e mos
 ## Pendências
 
 - Link do Swagger/Postman da API e do deploy ativo.
+
+
+## Observabilidade
+
+Os logs JSON correlacionam `requestId` e `awsRequestId` sem registrar CPF ou ID do cliente. O Authorizer não usa banco nem chamadas externas. A exportação OpenTelemetry para o collector no EKS é opcional e permanece desligada até validar DNS, rota e conectividade privada; quando habilitada, usa gRPC TCP/4317 e restrição de security group.
