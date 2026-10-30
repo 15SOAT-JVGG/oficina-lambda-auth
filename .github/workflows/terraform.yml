@@ -238,7 +238,7 @@ jobs:
       source_sha: ${{ github.sha }}
       # Configure esta variável com o mesmo SHA de oficina-infra-k8s usado no `uses` após
       # publicar o workflow reutilizável no GitHub.
-      infra_ref: eeda50319c5dba46662bd55021fa2cb8419d1baa
+      infra_ref: 1125053ceb0482d9bd256c978fa2c2b80403c104
       aws_region: ${{ needs.apply.outputs.aws_region }}
       tf_state_bucket: ${{ needs.apply.outputs.tf_state_bucket }}
       jwt_issuer: ${{ vars.JWT_ISSUER || 'oficina-api' }}
