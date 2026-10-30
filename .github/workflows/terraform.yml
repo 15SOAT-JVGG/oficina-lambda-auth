@@ -102,9 +102,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: homolog
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.HOMOLOG_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.HOMOLOG_AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.HOMOLOG_AWS_SESSION_TOKEN }}
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
       TF_VAR_aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
       TF_VAR_state_bucket: ${{ vars.TF_STATE_BUCKET }}
@@ -155,12 +155,10 @@ jobs:
       cancel-in-progress: false
     outputs:
       contracts_ready: ${{ steps.gateway-contracts.outputs.ready }}
-      tf_state_bucket: ${{ steps.gateway-contracts.outputs.tf_state_bucket }}
-      aws_region: ${{ steps.gateway-contracts.outputs.aws_region }}
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      AWS_ACCESS_KEY_ID: ${{ (inputs.environment || github.ref_name) == 'homolog' && secrets.HOMOLOG_AWS_ACCESS_KEY_ID || (inputs.environment || github.ref_name) == 'production' && secrets.AWS_ACCESS_KEY_ID || '' }}
+      AWS_SECRET_ACCESS_KEY: ${{ (inputs.environment || github.ref_name) == 'homolog' && secrets.HOMOLOG_AWS_SECRET_ACCESS_KEY || (inputs.environment || github.ref_name) == 'production' && secrets.AWS_SECRET_ACCESS_KEY || '' }}
+      AWS_SESSION_TOKEN: ${{ (inputs.environment || github.ref_name) == 'homolog' && secrets.HOMOLOG_AWS_SESSION_TOKEN || (inputs.environment || github.ref_name) == 'production' && secrets.AWS_SESSION_TOKEN || '' }}
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
       TF_VAR_aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
       TF_VAR_state_bucket: ${{ vars.TF_STATE_BUCKET }}
@@ -209,7 +207,6 @@ jobs:
         env:
           CONTRACT_ENVIRONMENT: ${{ inputs.environment || github.ref_name }}
         run: |
-          printf 'tf_state_bucket=%s\naws_region=%s\n' "$TF_VAR_state_bucket" "$AWS_REGION" >> "$GITHUB_OUTPUT"
           error_file="$(mktemp)"
           trap 'rm -f "$error_file"' EXIT
           for contract in upstream authorizer; do
@@ -234,17 +231,22 @@ jobs:
     name: Reconciliar Gateway após publicação
     needs: apply
     if: needs.apply.outputs.contracts_ready == 'true'
-    uses: 15SOAT-JVGG/oficina-infra-k8s/.github/workflows/reconcile.yml@d7607607ae7681c7106ebf828a94265d42c00141
+    uses: 15SOAT-JVGG/oficina-infra-k8s/.github/workflows/reconcile.yml@eeda50319c5dba46662bd55021fa2cb8419d1baa
     with:
       environment: ${{ inputs.environment || github.ref_name }}
       source_kind: lambda
       source_sha: ${{ github.sha }}
       # Configure esta variável com o mesmo SHA de oficina-infra-k8s usado no `uses` após
       # publicar o workflow reutilizável no GitHub.
-      infra_ref: d7607607ae7681c7106ebf828a94265d42c00141
+      infra_ref: 3bf202e1a420cd18e483060967b1e9a05bd142de
       aws_region: ${{ needs.apply.outputs.aws_region }}
       tf_state_bucket: ${{ needs.apply.outputs.tf_state_bucket }}
+      jwt_issuer: ${{ vars.JWT_ISSUER || 'oficina-api' }}
     secrets:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      AWS_ACCESS_KEY_ID: ${{ (inputs.environment || github.ref_name) == 'production' && secrets.AWS_ACCESS_KEY_ID || '' }}
+      AWS_SECRET_ACCESS_KEY: ${{ (inputs.environment || github.ref_name) == 'production' && secrets.AWS_SECRET_ACCESS_KEY || '' }}
+      AWS_SESSION_TOKEN: ${{ (inputs.environment || github.ref_name) == 'production' && secrets.AWS_SESSION_TOKEN || '' }}
+      HOMOLOG_AWS_ACCESS_KEY_ID: ${{ (inputs.environment || github.ref_name) == 'homolog' && secrets.HOMOLOG_AWS_ACCESS_KEY_ID || '' }}
+      HOMOLOG_AWS_SECRET_ACCESS_KEY: ${{ (inputs.environment || github.ref_name) == 'homolog' && secrets.HOMOLOG_AWS_SECRET_ACCESS_KEY || '' }}
+      HOMOLOG_AWS_SESSION_TOKEN: ${{ (inputs.environment || github.ref_name) == 'homolog' && secrets.HOMOLOG_AWS_SESSION_TOKEN || '' }}
+      AUTHORIZER_TEST_CUSTOMER_CPF: ${{ secrets.AUTHORIZER_TEST_CUSTOMER_CPF }}
