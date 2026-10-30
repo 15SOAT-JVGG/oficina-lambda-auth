@@ -239,8 +239,8 @@ jobs:
       # Configure esta variável com o mesmo SHA de oficina-infra-k8s usado no `uses` após
       # publicar o workflow reutilizável no GitHub.
       infra_ref: 3bf202e1a420cd18e483060967b1e9a05bd142de
-      aws_region: ${{ needs.apply.outputs.aws_region }}
-      tf_state_bucket: ${{ needs.apply.outputs.tf_state_bucket }}
+      aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      tf_state_bucket: ${{ vars.TF_STATE_BUCKET }}
       jwt_issuer: ${{ vars.JWT_ISSUER || 'oficina-api' }}
     secrets:
       AWS_ACCESS_KEY_ID: ${{ (inputs.environment || github.ref_name) == 'production' && secrets.AWS_ACCESS_KEY_ID || '' }}
