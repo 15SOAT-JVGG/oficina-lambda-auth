@@ -56,7 +56,7 @@ jobs:
           terraform_version: 1.10.5
 
       - name: terraform fmt
-        run: terraform -chdir=terraform fmt -check -recursive
+        run: terraform -chdir=terraform fmt -diff -check -recursive
 
       - name: terraform init
         run: terraform -chdir=terraform init -backend=false -input=false
@@ -231,12 +231,14 @@ jobs:
     name: Reconciliar Gateway após publicação
     needs: apply
     if: needs.apply.outputs.contracts_ready == 'true'
-    uses: 15SOAT-JVGG/oficina-infra-k8s/.github/workflows/reconcile.yml@4a395aa3852ea366edf7ab41348c5464192fd286
+    uses: 15SOAT-JVGG/oficina-infra-k8s/.github/workflows/reconcile.yml@5fde9b837986b63699cc683b7fa0cbe465ef038c
     with:
       environment: ${{ inputs.environment || github.ref_name }}
       source_kind: lambda
       source_sha: ${{ github.sha }}
-      infra_ref: 4a395aa3852ea366edf7ab41348c5464192fd286
+      # Configure esta variável com o mesmo SHA de oficina-infra-k8s usado no `uses` após
+      # publicar o workflow reutilizável no GitHub.
+      infra_ref: 5fde9b837986b63699cc683b7fa0cbe465ef038c
       aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
       tf_state_bucket: ${{ vars.TF_STATE_BUCKET }}
       jwt_issuer: ${{ vars.JWT_ISSUER || 'oficina-api' }}
