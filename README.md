@@ -1,5 +1,16 @@
 # oficina-lambda-auth
 
+## Entrega da Fase 3
+
+- [Vídeo atual — 13min29s](https://youtu.be/hgZPRw7hWeA).
+- [Documentação e PDF de entrega](https://github.com/15SOAT-JVGG/oficina-infra-k8s/tree/main/docs/fase3).
+- [Diagrama de componentes](https://github.com/15SOAT-JVGG/oficina-infra-k8s/blob/main/docs/fase3/ARQUITETURA.md) e [sequências dos fluxos](https://github.com/15SOAT-JVGG/oficina-infra-k8s/blob/main/docs/fase3/SEQUENCIAS.md).
+- [Pipeline Terraform/deploy](https://github.com/15SOAT-JVGG/oficina-lambda-auth/actions/workflows/terraform.yml): Valida Go e Terraform, publica autenticação CPF e Authorizer e reconcilia o Gateway nos ambientes homolog/production.
+- [Swagger da API](https://dcs5hfax0e.execute-api.us-east-1.amazonaws.com/q/swagger-ui/) e [roteiro com todos os pipelines](https://github.com/15SOAT-JVGG/oficina-infra-k8s/blob/main/docs/fase3/ROTEIRO-VIDEO.md).
+
+O runtime depende do Learner Lab ativo; documentos, código e vídeo permanecem disponíveis após o encerramento.
+
+
 Função serverless de autenticação por CPF da **Oficina Mecânica** (FIAP 16SOAT — Tech Challenge Fase 3).
 O cliente informa o CPF e recebe o JWT com que consome as rotas protegidas da API (`/v1/me/...`).
 
