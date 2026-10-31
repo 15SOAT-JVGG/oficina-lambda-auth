@@ -14,9 +14,13 @@ import (
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambdacontext"
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/15SOAT-JVGG/oficina-lambda-auth/internal/auth"
 	"github.com/15SOAT-JVGG/oficina-lambda-auth/internal/cpf"
+	"github.com/15SOAT-JVGG/oficina-lambda-auth/internal/telemetry"
 )
 
 const (
@@ -66,19 +70,57 @@ type errorResponse struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
 	Path      string `json:"path"`
-	TraceID   string `json:"traceId"`
+	RequestID string `json:"requestId"`
+	TraceID   string `json:"traceId,omitempty"`
 	Timestamp string `json:"timestamp"`
 }
 
 // Handle responde ao POST /v1/auth/customer. O erro devolvido é sempre nil: toda falha vira resposta HTTP.
-func (h *Handler) Handle(ctx context.Context, event events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+func (h *Handler) Handle(ctx context.Context, event events.APIGatewayV2HTTPRequest) (response events.APIGatewayV2HTTPResponse, returnedErr error) {
+	startedAt := time.Now()
+	ctx = telemetry.Extract(ctx, event.Headers)
+	ctx, span := telemetry.StartServer(ctx, "POST /v1/auth/customer")
+	defer func() {
+		span.End()
+		telemetry.Flush()
+	}()
 	requestID := event.RequestContext.RequestID
-	logger := h.logger.With("requestId", requestID)
+	if strings.TrimSpace(requestID) == "" {
+		requestID = uuid.NewString()
+	}
+	awsRequestID := ""
+	if lambdaContext, ok := lambdacontext.FromContext(ctx); ok {
+		awsRequestID = lambdaContext.AwsRequestID
+	}
+	logger := h.logger.With("requestId", requestID, "awsRequestId", awsRequestID, "operation", "customer-authenticate")
+	if traceID := telemetry.TraceID(ctx); traceID != "" {
+		logger = logger.With("traceId", traceID)
+	}
+	statusCode := 0
+	result := "failure"
+	errorCode := ""
+	defer func() {
+		if returnedErr != nil {
+			result = "error"
+		}
+		logger.Info("request_completed",
+			"statusCode", statusCode,
+			"outcome", result,
+			"errorCode", errorCode,
+			"durationMs", time.Since(startedAt).Milliseconds(),
+		)
+		span.SetAttributes(
+			attribute.Int("http.response.status_code", statusCode),
+			attribute.String("app.outcome", result),
+		)
+	}()
 
 	rawCPF, err := readCPF(event)
 	if err != nil {
 		logger.Warn("customer_auth_rejected", "reason", "malformed-request")
-		return failure(http.StatusBadRequest, typeValidation, codeInvalidRequest, `Corpo esperado: {"cpf": "..."}`, requestID), nil
+		statusCode, errorCode = http.StatusBadRequest, codeInvalidRequest
+		response = failure(ctx, statusCode, typeValidation, errorCode, `Corpo esperado: {"cpf": "..."}`, requestID)
+		return response, nil
 	}
 
 	issued, err := h.authenticator.Authenticate(ctx, rawCPF)
@@ -86,17 +128,27 @@ func (h *Handler) Handle(ctx context.Context, event events.APIGatewayV2HTTPReque
 	var notAuthorized *auth.NotAuthorizedError
 	switch {
 	case err == nil:
-		logger.Info("customer_authenticated", "customerId", issued.CustomerID.String())
-		return success(issued), nil
+		result = "success"
+		logger.Info("customer_authenticated")
+		statusCode = http.StatusOK
+		response = success(issued, requestID)
+		return response, nil
 	case errors.Is(err, cpf.ErrInvalid):
 		logger.Warn("customer_auth_rejected", "reason", "invalid-cpf")
-		return failure(http.StatusBadRequest, typeValidation, codeInvalidCPF, err.Error(), requestID), nil
+		statusCode, errorCode = http.StatusBadRequest, codeInvalidCPF
+		response = failure(ctx, statusCode, typeValidation, errorCode, err.Error(), requestID)
+		return response, nil
 	case errors.As(err, &notAuthorized):
 		logger.Warn("customer_auth_rejected", "reason", notAuthorized.Reason)
-		return failure(http.StatusUnauthorized, typeUnauthorized, codeNotAuthorized, notAuthorized.Error(), requestID), nil
+		statusCode, errorCode = http.StatusUnauthorized, codeNotAuthorized
+		response = failure(ctx, statusCode, typeUnauthorized, errorCode, notAuthorized.Error(), requestID)
+		return response, nil
 	default:
 		logger.Error("customer_auth_failed", "error", err.Error())
-		return failure(http.StatusInternalServerError, "", codeInternalError, "Falha ao autenticar o cliente", requestID), nil
+		telemetry.MarkError(span, codeInternalError)
+		statusCode, errorCode = http.StatusInternalServerError, codeInternalError
+		response = failure(ctx, statusCode, "", errorCode, "Falha ao autenticar o cliente", requestID)
+		return response, nil
 	}
 }
 
@@ -123,41 +175,46 @@ func readCPF(event events.APIGatewayV2HTTPRequest) (string, error) {
 	return *request.CPF, nil
 }
 
-func success(issued auth.IssuedToken) events.APIGatewayV2HTTPResponse {
+func success(issued auth.IssuedToken, requestID string) events.APIGatewayV2HTTPResponse {
 	return respond(http.StatusOK, loginResponse{
 		Token:      issued.Token,
 		CustomerID: issued.CustomerID.String(),
 		Role:       issued.Role,
 		ExpiresIn:  issued.ExpiresIn,
-	})
+	}, requestID)
 }
 
-func failure(status int, errorType, code, message, requestID string) events.APIGatewayV2HTTPResponse {
+func failure(ctx context.Context, status int, errorType, code, message, requestID string) events.APIGatewayV2HTTPResponse {
 	return respond(status, errorResponse{
 		Status:    status,
 		Type:      errorType,
 		Code:      code,
 		Message:   message,
 		Path:      path,
-		TraceID:   requestID,
+		RequestID: requestID,
+		TraceID:   telemetry.TraceID(ctx),
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
-	})
+	}, requestID)
 }
 
-func respond(status int, body any) events.APIGatewayV2HTTPResponse {
+func respond(status int, body any, requestID string) events.APIGatewayV2HTTPResponse {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		// Os tipos de resposta são estruturas fixas: falhar aqui é bug de programação, não de entrada.
 		panic("serializar resposta: " + err.Error())
 	}
+	headers := map[string]string{
+		"Content-Type": "application/json",
+		// RFC 6749 §5.1: resposta com token não pode ser guardada por navegador, CDN ou proxy.
+		"Cache-Control": "no-store",
+		"Pragma":        "no-cache",
+	}
+	if requestID != "" {
+		headers["X-Request-ID"] = requestID
+	}
 	return events.APIGatewayV2HTTPResponse{
 		StatusCode: status,
-		Headers: map[string]string{
-			"Content-Type": "application/json",
-			// RFC 6749 §5.1: resposta com token não pode ser guardada por navegador, CDN ou proxy.
-			"Cache-Control": "no-store",
-			"Pragma":        "no-cache",
-		},
-		Body: string(payload),
+		Headers:    headers,
+		Body:       string(payload),
 	}
 }

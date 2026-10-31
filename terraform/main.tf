@@ -66,6 +66,19 @@ resource "aws_vpc_security_group_egress_rule" "postgres" {
   ip_protocol       = "tcp"
 }
 
+# Tracing só pode ser habilitado junto a um receptor OTLP explicitamente autorizado na VPC.
+# O endpoint permanece vazio até o caminho Lambda → EKS/collector ser validado no Learner Lab.
+resource "aws_vpc_security_group_egress_rule" "otel" {
+  count = var.otel_exporter_otlp_endpoint != "" && var.otel_collector_security_group_id != null ? 1 : 0
+
+  security_group_id            = aws_security_group.function.id
+  description                  = "OTLP gRPC para o collector privado"
+  referenced_security_group_id = var.otel_collector_security_group_id
+  from_port                    = 4317
+  to_port                      = 4317
+  ip_protocol                  = "tcp"
+}
+
 resource "aws_cloudwatch_log_group" "function" {
   name              = "/aws/lambda/${local.function_name}"
   retention_in_days = var.log_retention_days
@@ -97,19 +110,29 @@ resource "aws_lambda_function" "auth" {
   # no Learner Lab.
   environment {
     variables = {
-      DB_HOST                = local.db.db_address
-      DB_PORT                = tostring(local.db.db_port)
-      DB_NAME                = local.db.db_name
-      DB_USERNAME            = local.db.db_username
-      DB_PASSWORD            = var.db_password
-      DB_SSLMODE             = "require"
-      JWT_PRIVATE_KEY_B64    = var.jwt_private_key_b64
-      JWT_ISSUER             = var.jwt_issuer
-      JWT_EXPIRATION_MINUTES = tostring(var.jwt_expiration_minutes)
+      DB_HOST                     = local.db.db_address
+      DB_PORT                     = tostring(local.db.db_port)
+      DB_NAME                     = local.db.db_name
+      DB_USERNAME                 = local.db.db_username
+      DB_PASSWORD                 = var.db_password
+      DB_SSLMODE                  = "require"
+      JWT_PRIVATE_KEY_B64         = var.jwt_private_key_b64
+      JWT_ISSUER                  = var.jwt_issuer
+      JWT_EXPIRATION_MINUTES      = tostring(var.jwt_expiration_minutes)
+      APP_ENVIRONMENT             = var.environment
+      APP_VERSION                 = var.source_revision
+      OTEL_EXPORTER_OTLP_ENDPOINT = var.otel_exporter_otlp_endpoint
     }
   }
 
   depends_on = [aws_cloudwatch_log_group.function]
+
+  lifecycle {
+    precondition {
+      condition     = var.otel_exporter_otlp_endpoint == "" || var.otel_collector_security_group_id != null
+      error_message = "Configure o security group do collector privado antes de habilitar OTLP para a Lambda."
+    }
+  }
 }
 
 # A rota é mais específica que o proxy ANY /{proxy+} do cluster, então o gateway a escolhe para
@@ -162,6 +185,8 @@ resource "aws_lambda_function" "authorizer" {
     variables = {
       JWT_PUBLIC_KEY_B64 = var.jwt_public_key_b64
       JWT_ISSUER         = var.jwt_issuer
+      APP_ENVIRONMENT    = var.environment
+      APP_VERSION        = var.source_revision
     }
   }
 
