@@ -1,0 +1,35 @@
+name: Validate homolog Authorizer through Gateway
+on:
+  push:
+    branches: [codex/validate-authorizer-gateway]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: homolog
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.HOMOLOG_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.HOMOLOG_AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.HOMOLOG_AWS_SESSION_TOKEN }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      AUTHORIZER_TEST_CUSTOMER_CPF: ${{ secrets.AUTHORIZER_TEST_CUSTOMER_CPF }}
+      JWT_ISSUER: oficina-api
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: 15SOAT-JVGG/oficina-infra-k8s
+          ref: a3f25bcfd5d6fbae177553060639da01d7314537
+      - name: Test public routes, customer login and authorization matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          state_file="$RUNNER_TEMP/gateway-state.json"
+          trap 'rm -f "$state_file"' EXIT
+          aws s3 cp "s3://$TF_STATE_BUCKET/oficina-infra-k8s/terraform.tfstate" "$state_file" --only-show-errors
+          gateway_url="$(jq -er '.outputs.api_gateway_urls.value.homolog' "$state_file")"
+          scripts/api-gateway-authorizer-smoke-test.sh "$gateway_url"
