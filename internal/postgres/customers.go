@@ -8,9 +8,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/15SOAT-JVGG/oficina-lambda-auth/internal/auth"
 	"github.com/15SOAT-JVGG/oficina-lambda-auth/internal/cpf"
+	"github.com/15SOAT-JVGG/oficina-lambda-auth/internal/telemetry"
 )
 
 const findByCPF = `
@@ -45,8 +47,12 @@ func (c *Customers) FindByCPF(ctx context.Context, document cpf.CPF) (*auth.Cust
 }
 
 func (c *Customers) find(ctx context.Context, document cpf.CPF) (*auth.Customer, error) {
+	ctx, span := telemetry.StartDatabase(ctx, "customer.lookup")
+	defer span.End()
+
 	conn, err := c.connection(ctx)
 	if err != nil {
+		telemetry.MarkError(span, "database.connection_error")
 		return nil, err
 	}
 
@@ -56,11 +62,14 @@ func (c *Customers) find(ctx context.Context, document cpf.CPF) (*auth.Customer,
 	)
 	err = conn.QueryRow(ctx, findByCPF, document.Digits()).Scan(&id, &active)
 	if errors.Is(err, pgx.ErrNoRows) {
+		span.SetAttributes(attribute.String("db.result", "not_found"))
 		return nil, nil
 	}
 	if err != nil {
+		telemetry.MarkError(span, "database.query_error")
 		return nil, fmt.Errorf("consultar cliente por CPF: %w", err)
 	}
+	span.SetAttributes(attribute.String("db.result", "found"))
 	return &auth.Customer{ID: id, Active: active}, nil
 }
 

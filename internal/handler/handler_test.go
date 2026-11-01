@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambdacontext"
 	"github.com/google/uuid"
 
 	"github.com/15SOAT-JVGG/oficina-lambda-auth/internal/auth"
@@ -72,6 +73,9 @@ func TestHandle(t *testing.T) {
 		if response.Headers["Cache-Control"] != "no-store" || response.Headers["Pragma"] != "no-cache" {
 			t.Errorf("a resposta com token não pode ser cacheada (RFC 6749 §5.1): %v", response.Headers)
 		}
+		if response.Headers["X-Request-ID"] != requestID {
+			t.Errorf("request ID não foi devolvido: %v", response.Headers)
+		}
 		body := decode(t, response)
 		if body["token"] != "signed.jwt.token" || body["customerId"] != customerID.String() ||
 			body["role"] != "CUSTOMER" || body["expiresIn"] != float64(3600) {
@@ -85,6 +89,30 @@ func TestHandle(t *testing.T) {
 		}
 		if !strings.Contains(logs.String(), `"event":"customer_authenticated"`) {
 			t.Errorf("faltou o log de sucesso: %s", logs)
+		}
+		if !strings.Contains(logs.String(), `"event":"request_completed"`) ||
+			!strings.Contains(logs.String(), `"statusCode":200`) ||
+			!strings.Contains(logs.String(), `"outcome":"success"`) {
+			t.Errorf("faltou o resumo estruturado da requisição: %s", logs)
+		}
+	})
+
+	t.Run("gera request ID se o evento não trouxer um e registra o ID da invocação", func(t *testing.T) {
+		h, logs := newHandler(&fakeAuthenticator{issued: auth.IssuedToken{
+			Token: "signed.jwt.token", CustomerID: customerID, Role: "CUSTOMER",
+		}})
+		ctx := lambdacontext.NewContext(context.Background(), &lambdacontext.LambdaContext{AwsRequestID: "aws-invocation-1"})
+
+		response, err := h.Handle(ctx, events.APIGatewayV2HTTPRequest{Body: `{"cpf":"52998224725"}`})
+
+		if err != nil || response.StatusCode != 200 {
+			t.Fatalf("status/erro = %d/%v", response.StatusCode, err)
+		}
+		if response.Headers["X-Request-ID"] == "" {
+			t.Errorf("faltou request ID gerado: %v", response.Headers)
+		}
+		if !strings.Contains(logs.String(), `"awsRequestId":"aws-invocation-1"`) {
+			t.Errorf("faltou o ID de invocação nos logs: %s", logs)
 		}
 	})
 
@@ -203,13 +231,16 @@ func TestHandle(t *testing.T) {
 		response, _ := h.Handle(context.Background(), request(`{"cpf":"1"}`))
 
 		body := decode(t, response)
-		for _, field := range []string{"status", "type", "code", "message", "path", "traceId", "timestamp"} {
+		for _, field := range []string{"status", "type", "code", "message", "path", "requestId", "timestamp"} {
 			if _, ok := body[field]; !ok {
 				t.Errorf("faltou o campo %q: %v", field, body)
 			}
 		}
-		if body["path"] != "/v1/auth/customer" || body["traceId"] != requestID || body["status"] != float64(400) {
+		if body["path"] != "/v1/auth/customer" || body["requestId"] != requestID || body["status"] != float64(400) {
 			t.Errorf("campos inesperados: %v", body)
+		}
+		if _, hasTraceID := body["traceId"]; hasTraceID {
+			t.Error("request ID do gateway não deve ser apresentado como trace ID")
 		}
 		if response.Headers["Cache-Control"] != "no-store" {
 			t.Errorf("respostas de erro também não devem ser cacheadas: %v", response.Headers)

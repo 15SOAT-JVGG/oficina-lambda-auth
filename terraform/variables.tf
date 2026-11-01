@@ -88,7 +88,18 @@ variable "log_retention_days" {
   default     = 7
 }
 
+variable "otel_exporter_otlp_endpoint" {
+  description = "Endpoint OTLP gRPC privado (host:4317). Vazio mantém traces da Lambda desativados até existir rota privada validada."
+  type        = string
+  default     = ""
+}
 
+variable "otel_collector_security_group_id" {
+  description = "Security group do receptor OTLP privado na mesma VPC; obrigatório quando otel_exporter_otlp_endpoint é informado."
+  type        = string
+  default     = null
+  nullable    = true
+}
 
 variable "lab_role_name" {
   description = "Role pré-existente do AWS Academy usada pela função (não é possível criar IAM no Learner Lab)."
